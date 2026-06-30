@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GridWorld — Value Iteration</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0e14;
+      color: #a8bcc8;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 30px;
+      gap: 30px;
+    }
+    #left {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 400;
+      color: #7a8fa0;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+    canvas {
+      border: 1px solid #1e2e3a;
+      border-radius: 4px;
+    }
+    #controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    button {
+      background: #c0a040;
+      color: #0a0e14;
+      border: none;
+      padding: 10px 28px;
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #d8b848; }
+    #btn-solve { background: #4a8a60; color: #0a0e14; }
+    #btn-solve:hover { background: #5aaa70; }
+    #btn-solve:disabled { opacity: 0.4; cursor: default; }
+    #sidebar {
+      font-size: 0.85rem;
+      color: #5a6878;
+      line-height: 2.2;
+      padding-top: 40px;
+    }
+    #sidebar div { white-space: nowrap; }
+    #sidebar span { color: #a8bcc8; }
+    #sidebar .label { display: inline-block; width: 160px; text-align: right; margin-right: 8px; }
+    #sidebar h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #7a8fa0;
+      margin-top: 20px;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    label {
+      font-size: 0.8rem;
+      color: #5a6878;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    input[type="range"] {
+      width: 100px;
+      accent-color: #7a8fa0;
+    }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <h1>GridWorld MDP</h1>
+    <div id="controls">
+      <button id="btn-start">Random</button>
+      <button id="btn-solve">Solve</button>
+      <label>
+        Speed
+        <input type="range" id="speed" min="1" max="50" value="3">
+      </label>
+    </div>
+    <canvas id="grid"></canvas>
+  </div>
+  <div id="sidebar">
+    <h2>Agent</h2>
+    <div><span class="label">Mode</span> <span id="mode-display">—</span></div>
+    <div><span class="label">Step</span> <span id="step-count">0</span></div>
+    <div><span class="label">Last R</span> <span id="last-reward">—</span></div>
+    <div><span class="label">Total R</span> <span id="total-reward">0.00</span></div>
+    <div><span class="label">Discounted Return</span> <span id="discounted-return">0.00</span></div>
+    <h2>MDP</h2>
+    <div><span class="label">γ</span> <span id="gamma-display">0.9</span></div>
+    <div><span class="label">γ<sup>t</sup></span> <span id="gamma-power">1.00</span></div>
+    <div><span class="label">Step reward</span> <span id="step-reward-display">-0.01</span></div>
+    <div><span class="label">Goal reward</span> <span id="goal-reward-display">1.00</span></div>
+    <h2>Value Iteration</h2>
+    <div><span class="label">Iterations</span> <span id="vi-iterations">—</span></div>
+    <div><span class="label">Converged (δ)</span> <span id="vi-delta">—</span></div>
+    <div><span class="label">V*(start)</span> <span id="vi-vstart">—</span></div>
+  </div>
+
+<script>
+(() => {
+  // ─── MDP Definition ──────────────────────────────────
+  const ROWS = 4, COLS = 4;
+  const START = [0, 0];
+  const GOAL = [3, 3];
+  const WALLS = new Set(['1,1']);
+  const STEP_REWARD = -0.01;
+  const GOAL_REWARD = 1.0;
+  const GAMMA = 0.9;
+
+  const ACTIONS = [
+    [-1, 0],  // up
+    [1, 0],   // down
+    [0, -1],  // left
+    [0, 1],   // right
+  ];
+  const ACTION_ARROWS = ['↑', '↓', '←', '→'];
+
+  // ─── Colours (steel palette) ─────────────────────────
+  const COL = {
+    bg:       '#0a0e14',
+    grid:     '#1e2e3a',
+    cell:     '#0f1920',
+    wall:     '#2a3a48',
+    goal:     '#4a8a60',
+    goalGlow: 'rgba(74, 138, 96, 0.15)',
+    agent:    '#c0a040',
+    agentGlow:'rgba(192, 160, 64, 0.25)',
+    text:     '#7a8fa0',
+    textDim:  '#3a4a58',
+    arrow:    '#c0a040',
+    policyArrow: '#5a9a70',
+    valueBg:  (v, maxV) => {
+      const t = maxV > 0 ? Math.max(0, v / maxV) : 0;
+      const r = Math.round(10 + t * 30);
+      const g = Math.round(25 + t * 60);
+      const b = Math.round(32 + t * 40);
+      return `rgb(${r},${g},${b})`;
+    },
+  };
+
+  // ─── Canvas setup ────────────────────────────────────
+  const canvas = document.getElementById('grid');
+  const ctx = canvas.getContext('2d');
+  const CELL = 120;
+  const PAD = 40;
+  canvas.width = COLS * CELL + PAD * 2;
+  canvas.height = ROWS * CELL + PAD * 2;
+
+  // ─── State ───────────────────────────────────────────
+  let agent = [...START];
+  let stepCount = 0;
+  let totalReward = 0;
+  let discountedReturn = 0;
+  let discount = 1.0;
+  let running = false;
+  let trail = [];
+  let lastAction = null;
+  let lastReward = null;
+  let mode = null;   // 'random' or 'optimal'
+
+  // Value iteration results
+  let values = null;    // Map: "r,c" -> value
+  let policy = null;    // Map: "r,c" -> action index
+  let viIterations = 0;
+  let viDelta = 0;
+
+  function reset() {
+    agent = [...START];
+    stepCount = 0;
+    totalReward = 0;
+    discountedReturn = 0;
+    discount = 1.0;
+    trail = [];
+    lastAction = null;
+    lastReward = null;
+    updateStats();
+    draw();
+  }
+
+  function isWall(r, c) { return WALLS.has(`${r},${c}`); }
+  function isGoal(r, c) { return r === GOAL[0] && c === GOAL[1]; }
+
+  function getTransition(r, c, actionIdx) {
+    const [dr, dc] = ACTIONS[actionIdx];
+    let nr = r + dr, nc = c + dc;
+    if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || isWall(nr, nc)) {
+      nr = r; nc = c;
+    }
+    const done = isGoal(nr, nc);
+    const reward = done ? GOAL_REWARD : STEP_REWARD;
+    return { nr, nc, reward, done };
+  }
+
+  // ─── Value Iteration (one sweep at a time) ──────────
+  let solving = false;
+  let converged = false;
+
+  function initValues() {
+    values = {};
+    policy = {};
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++)
+        if (!isWall(r, c)) {
+          values[`${r},${c}`] = 0;
+          if (!isGoal(r, c)) policy[`${r},${c}`] = 0;
+        }
+    viIterations = 0;
+    viDelta = Infinity;
+    converged = false;
+  }
+
+  function viSweep() {
+    // One full sweep of the Bellman update
+    let delta = 0;
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (isWall(r, c) || isGoal(r, c)) continue;
+
+        const key = `${r},${c}`;
+        const oldV = values[key];
+        let bestV = -Infinity;
+        let bestActions = [];
+
+        for (let a = 0; a < 4; a++) {
+          const { nr, nc, reward } = getTransition(r, c, a);
+          const v = reward + GAMMA * values[`${nr},${nc}`];
+          if (v > bestV + 1e-10) {
+            bestV = v;
+            bestActions = [a];
+          } else if (Math.abs(v - bestV) < 1e-10) {
+            bestActions.push(a);
+          }
+        }
+
+        values[key] = bestV;
+        // Break ties randomly so the policy isn't always "up"
+        policy[key] = bestActions[Math.floor(Math.random() * bestActions.length)];
+        delta = Math.max(delta, Math.abs(bestV - oldV));
+      }
+    }
+
+    viIterations++;
+    viDelta = delta;
+    converged = delta < 1e-8;
+    return converged;
+  }
+
+  // ─── Step ────────────────────────────────────────────
+  function step() {
+    trail.push([agent[0], agent[1], 1.0]);
+
+    let action;
+    if (policy && mode !== 'random') {
+      const key = `${agent[0]},${agent[1]}`;
+      // Follow policy, but with epsilon-greedy exploration.
+      // Higher epsilon early (when values are low/uninformed),
+      // lower epsilon as values improve.
+      const maxV = Math.max(...Object.values(values || {}), 0.001);
+      const v = Math.abs(values?.[key] || 0);
+      const confidence = Math.min(v / maxV, 1);
+      const epsilon = 0.8 * (1 - confidence); // 80% random when uninformed, 0% when confident
+
+      if (Math.random() < epsilon) {
+        action = Math.floor(Math.random() * 4);
+      } else {
+        action = policy[key];
+      }
+      if (action === undefined) action = Math.floor(Math.random() * 4);
+    } else {
+      action = Math.floor(Math.random() * 4);
+    }
+
+    lastAction = action;
+    const [dr, dc] = ACTIONS[action];
+    const nr = agent[0] + dr;
+    const nc = agent[1] + dc;
+
+    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && !isWall(nr, nc)) {
+      agent = [nr, nc];
+    }
+
+    const done = isGoal(agent[0], agent[1]);
+    const reward = done ? GOAL_REWARD : STEP_REWARD;
+    lastReward = reward;
+    totalReward += reward;
+    discountedReturn += discount * reward;
+    discount *= GAMMA;
+    stepCount++;
+
+    for (let i = trail.length - 1; i >= 0; i--) {
+      trail[i][2] *= 0.92;
+      if (trail[i][2] < 0.02) { trail.splice(i, 1); }
+    }
+
+    updateStats();
+    draw();
+
+    return done;
+  }
+
+  // ─── Drawing ─────────────────────────────────────────
+  function draw() {
+    ctx.fillStyle = COL.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Find max value for colour scaling
+    let maxV = 0;
+    if (values) {
+      for (const key in values) {
+        if (values[key] > maxV) maxV = values[key];
+      }
+    }
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const x = PAD + c * CELL;
+        const y = PAD + r * CELL;
+        const key = `${r},${c}`;
+
+        // Cell background
+        if (isWall(r, c)) {
+          ctx.fillStyle = COL.wall;
+          ctx.fillRect(x, y, CELL, CELL);
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x, y, CELL, CELL);
+          ctx.clip();
+          ctx.strokeStyle = '#3a4a58';
+          ctx.lineWidth = 1;
+          for (let i = -CELL; i < CELL; i += 12) {
+            ctx.beginPath();
+            ctx.moveTo(x + i, y);
+            ctx.lineTo(x + i + CELL, y + CELL);
+            ctx.stroke();
+          }
+          ctx.restore();
+        } else if (isGoal(r, c)) {
+          ctx.fillStyle = COL.goalGlow;
+          ctx.fillRect(x, y, CELL, CELL);
+          ctx.fillStyle = COL.cell;
+          ctx.fillRect(x + 2, y + 2, CELL - 4, CELL - 4);
+          ctx.fillStyle = COL.goal;
+          ctx.font = '28px serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('G', x + CELL / 2, y + CELL / 2);
+        } else if (values) {
+          // Colour cell by value
+          ctx.fillStyle = COL.valueBg(values[key] || 0, maxV);
+          ctx.fillRect(x, y, CELL, CELL);
+
+          // Show value number
+          ctx.fillStyle = '#a8bcc8';
+          ctx.font = '13px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText((values[key] || 0).toFixed(3), x + CELL / 2, y + CELL - 8);
+
+          // Show policy arrow
+          if (policy && policy[key] !== undefined) {
+            ctx.fillStyle = COL.policyArrow;
+            ctx.font = '32px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(ACTION_ARROWS[policy[key]], x + CELL / 2, y + CELL / 2 - 6);
+          }
+        } else {
+          ctx.fillStyle = COL.cell;
+          ctx.fillRect(x, y, CELL, CELL);
+        }
+
+        // Grid lines
+        ctx.strokeStyle = COL.grid;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, CELL, CELL);
+
+        // Coordinate labels
+        ctx.fillStyle = COL.textDim;
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        if (!isWall(r, c)) {
+          ctx.fillText(`${r},${c}`, x + 4, y + 4);
+        }
+      }
+    }
+
+    // Trail
+    for (const [tr, tc, age] of trail) {
+      const x = PAD + tc * CELL + CELL / 2;
+      const y = PAD + tr * CELL + CELL / 2;
+      ctx.fillStyle = `rgba(192, 160, 64, ${age * 0.12})`;
+      ctx.beginPath();
+      ctx.arc(x, y, CELL * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Agent — always drawn last so it's visible on any cell
+    const ax = PAD + agent[1] * CELL + CELL / 2;
+    const ay = PAD + agent[0] * CELL + CELL / 2;
+    const onGoal = isGoal(agent[0], agent[1]);
+    const agentRadius = onGoal ? CELL * 0.25 : CELL * 0.2;
+
+    const glow = ctx.createRadialGradient(ax, ay, 0, ax, ay, CELL * 0.5);
+    glow.addColorStop(0, onGoal ? 'rgba(255, 200, 64, 0.5)' : COL.agentGlow);
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(ax, ay, CELL * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = onGoal ? '#ffc840' : COL.agent;
+    ctx.beginPath();
+    ctx.arc(ax, ay, agentRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (lastAction !== null) {
+      ctx.fillStyle = COL.arrow;
+      ctx.font = '16px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ACTION_ARROWS[lastAction], ax, ay - CELL * 0.35);
+    }
+  }
+
+  // ─── Stats ───────────────────────────────────────────
+  function updateStats() {
+    document.getElementById('mode-display').textContent = mode || '—';
+    document.getElementById('step-count').textContent = stepCount;
+    document.getElementById('last-reward').textContent = lastReward === null ? '—' : lastReward.toFixed(2);
+    document.getElementById('total-reward').textContent = totalReward.toFixed(2);
+    document.getElementById('discounted-return').textContent = discountedReturn.toFixed(4);
+    document.getElementById('gamma-display').textContent = GAMMA;
+    document.getElementById('gamma-power').textContent = discount.toFixed(4);
+    document.getElementById('step-reward-display').textContent = STEP_REWARD;
+    document.getElementById('goal-reward-display').textContent = GOAL_REWARD.toFixed(2);
+    document.getElementById('vi-iterations').textContent = viIterations || '—';
+    document.getElementById('vi-delta').textContent = viDelta ? viDelta.toExponential(2) : '—';
+    document.getElementById('vi-vstart').textContent = values ? (values[`${START[0]},${START[1]}`] || 0).toFixed(4) : '—';
+  }
+
+  // ─── Controls ────────────────────────────────────────
+  const btnStart = document.getElementById('btn-start');
+  const btnSolve = document.getElementById('btn-solve');
+  const speedSlider = document.getElementById('speed');
+
+  btnStart.addEventListener('click', () => {
+    if (running) {
+      running = false;
+      solving = false;
+      btnStart.textContent = 'Random';
+    } else {
+      // Reset everything for a fresh random run
+      values = null;
+      policy = null;
+      converged = false;
+      viIterations = 0;
+      viDelta = 0;
+      reset();
+      mode = 'random';
+      running = true;
+      btnStart.textContent = 'Pause';
+      btnSolve.textContent = 'Solve';
+      updateStats();
+      runLoop();
+    }
+  });
+
+  btnSolve.addEventListener('click', () => {
+    if (solving) {
+      // Pause the solve loop
+      solving = false;
+      running = false;
+      btnSolve.textContent = 'Solve';
+      return;
+    }
+
+    // Initialise on first click
+    if (!values) initValues();
+    mode = 'solving';
+    solving = true;
+    running = false;
+    btnSolve.textContent = 'Pause';
+    // Start the solve-then-run cycle
+    doSweepThenRun();
+  });
+
+  function doSweepThenRun() {
+    if (!solving) return;
+
+    // 1. Do one Bellman sweep
+    viSweep();
+    updateStats();
+    draw();
+
+    // 2. Pause to show updated values, then reset agent and run
+    setTimeout(() => {
+      if (!solving) return;
+      agent = [...START];
+      stepCount = 0;
+      totalReward = 0;
+      discountedReturn = 0;
+      discount = 1.0;
+      trail = [];
+      lastAction = null;
+      lastReward = null;
+      updateStats();
+      draw();
+
+      // 3. Another pause so you see the agent at start, then go
+      setTimeout(() => {
+        if (!solving) return;
+        running = true;
+        runEpisodeThenNextSweep();
+      }, 500);
+    }, 1000);
+  }
+
+  function runEpisodeThenNextSweep() {
+    if (!solving || !running) return;
+
+    const done = step();
+    if (done) {
+      running = false;
+      if (converged) {
+        // We're done — final policy is optimal
+        solving = false;
+        btnSolve.textContent = 'Solved!';
+        return;
+      }
+      // Pause briefly at the goal, then do next sweep
+      setTimeout(() => doSweepThenRun(), 800);
+      return;
+    }
+
+    // Safety: if the agent is stuck in a loop (bad early policy), cap at 50 steps
+    if (stepCount > 50) {
+      running = false;
+      draw();
+      setTimeout(() => doSweepThenRun(), 800);
+      return;
+    }
+
+    const delay = Math.max(20, 2000 / speedSlider.value);
+    setTimeout(runEpisodeThenNextSweep, delay);
+  }
+
+  function runLoop() {
+    if (!running) return;
+    const done = step();
+    if (done) {
+      running = false;
+      btnStart.textContent = 'Random';
+      return;
+    }
+    const delay = Math.max(20, 2000 / speedSlider.value);
+    setTimeout(runLoop, delay);
+  }
+
+  // ─── Init ────────────────────────────────────────────
+  draw();
+  updateStats();
+})();
+</script>
+</body>
+</html>
