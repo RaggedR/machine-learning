@@ -90,7 +90,7 @@
 </head>
 <body>
   <div id="left">
-    <h1>GridWorld MDP</h1>
+    <h1>GridWorld Markov Decision Process</h1>
     <div id="controls">
       <button id="btn-start">Random</button>
       <button id="btn-solve">Solve</button>
@@ -109,7 +109,7 @@
     <div><span class="label">Last R</span> <span id="last-reward">—</span></div>
     <div><span class="label">Total R</span> <span id="total-reward">0.00</span></div>
     <div><span class="label">Discounted Return</span> <span id="discounted-return">0.00</span></div>
-    <h2>MDP</h2>
+    <h2>Markov Decision Process</h2>
     <div><span class="label">γ</span> <span id="gamma-display">0.9</span></div>
     <div><span class="label">γ<sup>t</sup></span> <span id="gamma-power">1.00</span></div>
     <div><span class="label">Step reward</span> <span id="step-reward-display">-0.01</span></div>
@@ -277,20 +277,15 @@
     let action;
     if (policy && mode !== 'random') {
       const key = `${agent[0]},${agent[1]}`;
-      // Follow policy, but with epsilon-greedy exploration.
-      // Higher epsilon early (when values are low/uninformed),
-      // lower epsilon as values improve.
-      const maxV = Math.max(...Object.values(values || {}), 0.001);
-      const v = Math.abs(values?.[key] || 0);
-      const confidence = Math.min(v / maxV, 1);
-      const epsilon = 0.8 * (1 - confidence); // 80% random when uninformed, 0% when confident
-
-      if (Math.random() < epsilon) {
-        action = Math.floor(Math.random() * 4);
-      } else {
-        action = policy[key];
-      }
+      action = policy[key];
       if (action === undefined) action = Math.floor(Math.random() * 4);
+      // If this action would hit a wall or boundary, pick randomly instead
+      const [tr, tc] = ACTIONS[action];
+      const testR = agent[0] + tr;
+      const testC = agent[1] + tc;
+      if (testR < 0 || testR >= ROWS || testC < 0 || testC >= COLS || isWall(testR, testC)) {
+        action = Math.floor(Math.random() * 4);
+      }
     } else {
       action = Math.floor(Math.random() * 4);
     }
@@ -381,14 +376,6 @@
           ctx.textBaseline = 'bottom';
           ctx.fillText((values[key] || 0).toFixed(3), x + CELL / 2, y + CELL - 8);
 
-          // Show policy arrow
-          if (policy && policy[key] !== undefined) {
-            ctx.fillStyle = COL.policyArrow;
-            ctx.font = '32px monospace';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(ACTION_ARROWS[policy[key]], x + CELL / 2, y + CELL / 2 - 6);
-          }
         } else {
           ctx.fillStyle = COL.cell;
           ctx.fillRect(x, y, CELL, CELL);
@@ -559,8 +546,8 @@
       return;
     }
 
-    // Safety: if the agent is stuck in a loop (bad early policy), cap at 50 steps
-    if (stepCount > 50) {
+    // Safety: if the agent is stuck in a loop (bad early policy), cap at 200 steps
+    if (stepCount > 200) {
       running = false;
       draw();
       setTimeout(() => doSweepThenRun(), 800);
