@@ -55,6 +55,8 @@
     #btn-solve { background: #4a8a60; color: #0a0e14; }
     #btn-solve:hover { background: #5aaa70; }
     #btn-solve:disabled { opacity: 0.4; cursor: default; }
+    #btn-reset { background: #5a6878; color: #0a0e14; }
+    #btn-reset:hover { background: #7a8fa0; }
     #sidebar {
       font-size: 0.85rem;
       color: #5a6878;
@@ -92,6 +94,7 @@
     <div id="controls">
       <button id="btn-start">Random</button>
       <button id="btn-solve">Solve</button>
+      <button id="btn-reset">Reset</button>
       <label>
         Speed
         <input type="range" id="speed" min="1" max="50" value="3">
@@ -464,6 +467,7 @@
   // ─── Controls ────────────────────────────────────────
   const btnStart = document.getElementById('btn-start');
   const btnSolve = document.getElementById('btn-solve');
+  const btnReset = document.getElementById('btn-reset');
   const speedSlider = document.getElementById('speed');
 
   btnStart.addEventListener('click', () => {
@@ -578,6 +582,20 @@
     const delay = Math.max(20, 2000 / speedSlider.value);
     setTimeout(runLoop, delay);
   }
+
+  btnReset.addEventListener('click', () => {
+    running = false;
+    solving = false;
+    converged = false;
+    values = null;
+    policy = null;
+    viIterations = 0;
+    viDelta = 0;
+    mode = null;
+    btnStart.textContent = 'Random';
+    btnSolve.textContent = 'Solve';
+    reset();
+  });
 
   // ─── Init ────────────────────────────────────────────
   draw();
