@@ -99,6 +99,10 @@
         Speed
         <input type="range" id="speed" min="1" max="50" value="3">
       </label>
+      <label>
+        Slip <span id="slip-display">0%</span>
+        <input type="range" id="slip" min="0" max="50" value="0">
+      </label>
     </div>
     <canvas id="grid"></canvas>
   </div>
@@ -114,6 +118,7 @@
     <div><span class="label">γ<sup>t</sup></span> <span id="gamma-power">1.00</span></div>
     <div><span class="label">Step reward</span> <span id="step-reward-display">-0.01</span></div>
     <div><span class="label">Goal reward</span> <span id="goal-reward-display">1.00</span></div>
+    <div><span class="label">Slip probability</span> <span id="slip-prob-display">0%</span></div>
     <h2>Value Iteration</h2>
     <div><span class="label">Iterations</span> <span id="vi-iterations">—</span></div>
     <div><span class="label">Converged (δ)</span> <span id="vi-delta">—</span></div>
@@ -130,6 +135,7 @@
   const STEP_REWARD = -0.01;
   const GOAL_REWARD = 1.0;
   const GAMMA = 0.9;
+  let slipProb = 0;  // probability of going to a random neighbor instead
 
   const ACTIONS = [
     [-1, 0],  // up
@@ -248,10 +254,24 @@
 
         // Only update if at least one neighbor has positive value
         let hasReachableValue = false;
+        // Precompute all transitions for slippage calculation
+        const transitions = [];
         for (let a = 0; a < 4; a++) {
-          const { nr, nc, reward } = getTransition(r, c, a);
-          if (values[`${nr},${nc}`] > 0) hasReachableValue = true;
-          const v = reward + GAMMA * values[`${nr},${nc}`];
+          const t = getTransition(r, c, a);
+          transitions.push(t);
+          if (values[`${t.nr},${t.nc}`] > 0) hasReachableValue = true;
+        }
+
+        if (!hasReachableValue) continue;
+
+        for (let a = 0; a < 4; a++) {
+          // Expected value: (1-slip) * intended + slip * uniform over all 4 actions
+          let v = 0;
+          for (let b = 0; b < 4; b++) {
+            const { nr, nc, reward } = transitions[b];
+            const prob = (b === a) ? (1 - slipProb + slipProb / 4) : (slipProb / 4);
+            v += prob * (reward + GAMMA * values[`${nr},${nc}`]);
+          }
           if (v > bestV + 1e-10) {
             bestV = v;
             bestActions = [a];
@@ -259,8 +279,6 @@
             bestActions.push(a);
           }
         }
-
-        if (!hasReachableValue) continue;
 
         values[key] = bestV;
         // Store all tied actions — agent samples uniformly at runtime
@@ -298,8 +316,14 @@
       action = Math.floor(Math.random() * 4);
     }
 
-    lastAction = action;
-    const [dr, dc] = ACTIONS[action];
+    // Apply slippage: with probability slipProb, pick a random action instead
+    let actualAction = action;
+    if (slipProb > 0 && Math.random() < slipProb) {
+      actualAction = Math.floor(Math.random() * 4);
+    }
+
+    lastAction = action;  // show intended action, not actual
+    const [dr, dc] = ACTIONS[actualAction];
     const nr = agent[0] + dr;
     const nc = agent[1] + dc;
 
@@ -480,6 +504,13 @@
   const btnSolve = document.getElementById('btn-solve');
   const btnReset = document.getElementById('btn-reset');
   const speedSlider = document.getElementById('speed');
+  const slipSlider = document.getElementById('slip');
+
+  slipSlider.addEventListener('input', () => {
+    slipProb = slipSlider.value / 100;
+    document.getElementById('slip-display').textContent = slipSlider.value + '%';
+    document.getElementById('slip-prob-display').textContent = slipSlider.value + '%';
+  });
 
   btnStart.addEventListener('click', () => {
     if (running) {
