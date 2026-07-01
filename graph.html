@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Graph MDP — Value Iteration</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0e14;
+      color: #a8bcc8;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 30px;
+      gap: 30px;
+    }
+    #left {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 400;
+      color: #7a8fa0;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+    canvas {
+      border: 1px solid #1e2e3a;
+      border-radius: 4px;
+    }
+    #controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    button {
+      background: #c0a040;
+      color: #0a0e14;
+      border: none;
+      padding: 10px 28px;
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #d8b848; }
+    #btn-new { background: #5a6878; color: #0a0e14; }
+    #btn-new:hover { background: #7a8fa0; }
+    #btn-solve { background: #4a8a60; color: #0a0e14; }
+    #btn-solve:hover { background: #5aaa70; }
+    #btn-solve:disabled { opacity: 0.4; cursor: default; }
+    #btn-reset { background: #5a6878; color: #0a0e14; }
+    #btn-reset:hover { background: #7a8fa0; }
+    #sidebar {
+      font-size: 0.85rem;
+      color: #5a6878;
+      line-height: 2.2;
+      padding-top: 40px;
+    }
+    #sidebar div { white-space: nowrap; }
+    #sidebar span { color: #a8bcc8; }
+    #sidebar .label { display: inline-block; width: 160px; text-align: right; margin-right: 8px; }
+    #sidebar h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #7a8fa0;
+      margin-top: 20px;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    label {
+      font-size: 0.8rem;
+      color: #5a6878;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    input[type="range"] {
+      width: 100px;
+      accent-color: #7a8fa0;
+    }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <h1>Graph Markov Decision Process</h1>
+    <div id="controls">
+      <button id="btn-new">New Graph</button>
+      <button id="btn-start">Random</button>
+      <button id="btn-solve">Solve</button>
+      <button id="btn-reset">Reset</button>
+      <label>
+        Speed
+        <input type="range" id="speed" min="1" max="50" value="3">
+      </label>
+    </div>
+    <canvas id="grid"></canvas>
+  </div>
+  <div id="sidebar">
+    <h2>Agent</h2>
+    <div><span class="label">Mode</span> <span id="mode-display">—</span></div>
+    <div><span class="label">Step</span> <span id="step-count">0</span></div>
+    <div><span class="label">Last R</span> <span id="last-reward">—</span></div>
+    <div><span class="label">Total R</span> <span id="total-reward">0.00</span></div>
+    <div><span class="label">Discounted Return</span> <span id="discounted-return">0.00</span></div>
+    <h2>Markov Decision Process</h2>
+    <div><span class="label">Nodes</span> <span id="node-count">—</span></div>
+    <div><span class="label">Edges</span> <span id="edge-count">—</span></div>
+    <div><span class="label">γ</span> <span id="gamma-display">0.9</span></div>
+    <div><span class="label">γ<sup>t</sup></span> <span id="gamma-power">1.00</span></div>
+    <div><span class="label">Goal reward</span> <span id="goal-reward-display">1.00</span></div>
+    <h2>Value Iteration</h2>
+    <div><span class="label">Iterations</span> <span id="vi-iterations">—</span></div>
+    <div><span class="label">Converged (δ)</span> <span id="vi-delta">—</span></div>
+    <div><span class="label">V*(start)</span> <span id="vi-vstart">—</span></div>
+  </div>
+
+<script>
+(() => {
+  // ─── Constants ───────────────────────────────────────
+  const N_NODES = 20;
+  const STEP_REWARD = -0.10;
+  const GOAL_REWARD = 1.0;
+  const GAMMA = 0.9;
+  const NODE_RADIUS = 18;
+  const W = 560, H = 560;
+  const PAD = 50;
+  const MIN_DIST = 55;
+
+  // ─── Colours (steel palette) ─────────────────────────
+  const COL = {
+    bg:       '#0a0e14',
+    edge:     '#1e2e3a',
+    edgeHi:   '#2e4a5a',
+    node:     '#2a4a6a',
+    goal:     '#4a8a60',
+    goalGlow: 'rgba(74, 138, 96, 0.15)',
+    start:    '#2a5a8a',
+    agent:    '#c0a040',
+    agentGlow:'rgba(192, 160, 64, 0.25)',
+    text:     '#7a8fa0',
+    textDim:  '#3a4a58',
+    valueBg:  (v, maxV) => {
+      const t = maxV > 0 ? Math.max(0, v / maxV) : 0;
+      const r = Math.round(20 + t * 40);
+      const g = Math.round(35 + t * 160);
+      const b = Math.round(45 + t * 80);
+      return `rgb(${r},${g},${b})`;
+    },
+  };
+
+  // ─── Canvas setup ────────────────────────────────────
+  const canvas = document.getElementById('grid');
+  const ctx = canvas.getContext('2d');
+  canvas.width = W;
+  canvas.height = H;
+
+  // ─── Graph data ──────────────────────────────────────
+  let nodes = [];       // [{x, y}, ...]
+  let edges = [];       // [[i, j], ...]
+  let adj = [];         // adj[i] = [j, k, ...] neighbour indices
+  let edgeCosts = {};   // "i,j" -> negative cost
+  let startNode = 0;
+  let goalNode = 0;
+
+  // ─── Agent state ─────────────────────────────────────
+  let agent = 0;
+  let stepCount = 0;
+  let totalReward = 0;
+  let discountedReturn = 0;
+  let discount = 1.0;
+  let running = false;
+  let trail = [];       // [nodeIdx, opacity]
+  let lastReward = null;
+  let prevAgent = -1;
+  let mode = null;
+
+  // ─── Value iteration state ───────────────────────────
+  let values = null;    // Float64Array indexed by node
+  let policy = null;    // Object: node -> array of tied action indices
+  let viIterations = 0;
+  let viDelta = 0;
+  let solving = false;
+  let converged = false;
+  let updatedNodes = new Set();  // nodes that changed in the last sweep
+
+  // ─── Graph generation ────────────────────────────────
+
+  function dist(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function generateNodes() {
+    const pts = [];
+    let attempts = 0;
+    while (pts.length < N_NODES && attempts < 5000) {
+      const x = PAD + Math.random() * (W - 2 * PAD);
+      const y = PAD + Math.random() * (H - 2 * PAD);
+      let tooClose = false;
+      for (const p of pts) {
+        if (Math.hypot(p.x - x, p.y - y) < MIN_DIST) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (!tooClose) pts.push({ x, y });
+      attempts++;
+    }
+    return pts;
+  }
+
+  function buildGabrielGraph(pts) {
+    const result = [];
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const mx = (pts[i].x + pts[j].x) / 2;
+        const my = (pts[i].y + pts[j].y) / 2;
+        const radius = dist(pts[i], pts[j]) / 2;
+        let isGabriel = true;
+        for (let k = 0; k < pts.length; k++) {
+          if (k === i || k === j) continue;
+          if (Math.hypot(pts[k].x - mx, pts[k].y - my) < radius - 0.01) {
+            isGabriel = false;
+            break;
+          }
+        }
+        if (isGabriel) result.push([i, j]);
+      }
+    }
+    return result;
+  }
+
+  function buildAdjacency(n, edgeList) {
+    const a = Array.from({ length: n }, () => []);
+    for (const [i, j] of edgeList) {
+      a[i].push(j);
+      a[j].push(i);
+    }
+    return a;
+  }
+
+  function ensureConnected(pts, edgeList) {
+    // BFS to find components, then add MST edges to connect them
+    const n = pts.length;
+    const a = buildAdjacency(n, edgeList);
+    const component = new Int32Array(n).fill(-1);
+    let nComp = 0;
+
+    for (let s = 0; s < n; s++) {
+      if (component[s] >= 0) continue;
+      const queue = [s];
+      component[s] = nComp;
+      let head = 0;
+      while (head < queue.length) {
+        const u = queue[head++];
+        for (const v of a[u]) {
+          if (component[v] < 0) {
+            component[v] = nComp;
+            queue.push(v);
+          }
+        }
+      }
+      nComp++;
+    }
+
+    if (nComp === 1) return edgeList;
+
+    // Connect components by shortest inter-component edges
+    const result = [...edgeList];
+    const candidates = [];
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (component[i] !== component[j]) {
+          candidates.push({ i, j, d: dist(pts[i], pts[j]) });
+        }
+      }
+    }
+    candidates.sort((a, b) => a.d - b.d);
+
+    // Union-find
+    const parent = Array.from({ length: nComp }, (_, i) => i);
+    function find(x) { return parent[x] === x ? x : (parent[x] = find(parent[x])); }
+
+    for (const { i, j } of candidates) {
+      const ci = find(component[i]);
+      const cj = find(component[j]);
+      if (ci !== cj) {
+        parent[ci] = cj;
+        result.push([i, j]);
+      }
+    }
+    return result;
+  }
+
+  function computeEdgeCosts(pts, edgeList) {
+    const costs = {};
+    for (const [i, j] of edgeList) {
+      costs[`${i},${j}`] = STEP_REWARD;
+      costs[`${j},${i}`] = STEP_REWARD;
+    }
+    return costs;
+  }
+
+  function pickStartGoal(pts) {
+    // Closest to top-left for start, closest to bottom-right for goal
+    let bestS = 0, bestSd = Infinity;
+    let bestG = 0, bestGd = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const ds = Math.hypot(pts[i].x - PAD, pts[i].y - PAD);
+      const dg = Math.hypot(pts[i].x - (W - PAD), pts[i].y - (H - PAD));
+      if (ds < bestSd) { bestSd = ds; bestS = i; }
+      if (dg < bestGd) { bestGd = dg; bestG = i; }
+    }
+    // If same node, pick second-best goal
+    if (bestS === bestG) {
+      bestGd = Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        if (i === bestS) continue;
+        const dg = Math.hypot(pts[i].x - (W - PAD), pts[i].y - (H - PAD));
+        if (dg < bestGd) { bestGd = dg; bestG = i; }
+      }
+    }
+    return [bestS, bestG];
+  }
+
+  function generateGraph() {
+    nodes = generateNodes();
+    edges = buildGabrielGraph(nodes);
+    edges = ensureConnected(nodes, edges);
+    adj = buildAdjacency(nodes.length, edges);
+    edgeCosts = computeEdgeCosts(nodes, edges);
+    [startNode, goalNode] = pickStartGoal(nodes);
+    // Initialize values immediately so they're visible from the start
+    initValues();
+  }
+
+  // ─── MDP functions ──────────────────────────────────
+
+  function initValues() {
+    const n = nodes.length;
+    values = new Float64Array(n);
+    values[goalNode] = GOAL_REWARD;
+    policy = null;  // No policy until first sweep
+    viIterations = 0;
+    viDelta = Infinity;
+    converged = false;
+  }
+
+  function viSweep() {
+    let delta = 0;
+    const n = nodes.length;
+    if (!policy) policy = {};
+    // Synchronous update: read from old values, write to new
+    const oldValues = new Float64Array(values);
+    updatedNodes = new Set();
+
+    for (let i = 0; i < n; i++) {
+      if (i === goalNode) continue;
+
+      // Only update if at least one neighbor has positive value
+      let hasReachableValue = false;
+      for (let a = 0; a < adj[i].length; a++) {
+        if (oldValues[adj[i][a]] > 0) { hasReachableValue = true; break; }
+      }
+      if (!hasReachableValue) continue;
+
+      let bestV = -Infinity;
+      let bestActions = [];
+
+      for (let a = 0; a < adj[i].length; a++) {
+        const j = adj[i][a];
+        const v = STEP_REWARD + GAMMA * oldValues[j];
+        if (v > bestV + 1e-10) {
+          bestV = v;
+          bestActions = [a];
+        } else if (Math.abs(v - bestV) < 1e-10) {
+          bestActions.push(a);
+        }
+      }
+
+      if (bestActions.length > 0) {
+        values[i] = bestV;
+        // Store all tied actions — agent samples uniformly at runtime
+        policy[i] = bestActions;
+        const change = Math.abs(bestV - oldValues[i]);
+        if (change > 1e-10) updatedNodes.add(i);
+        delta = Math.max(delta, change);
+      }
+    }
+
+    viIterations++;
+    viDelta = delta;
+    // Not converged until all reachable cells have been updated AND delta is small
+    let allReached = true;
+    for (let i = 0; i < n; i++)
+      if (i !== goalNode && values[i] === 0)
+        allReached = false;
+    converged = allReached && delta < 1e-8;
+    return converged;
+  }
+
+  // ─── Step ────────────────────────────────────────────
+  function step() {
+    trail.push([agent, 1.0]);
+
+    let actionIdx;
+    if (policy && mode !== 'random') {
+      const actions = policy[agent];
+      if (actions) {
+        actionIdx = actions[Math.floor(Math.random() * actions.length)];
+      } else {
+        actionIdx = Math.floor(Math.random() * adj[agent].length);
+      }
+    } else {
+      // Random: avoid going back if possible
+      if (adj[agent].length > 1) {
+        const others = [];
+        for (let a = 0; a < adj[agent].length; a++) {
+          if (adj[agent][a] !== prevAgent) others.push(a);
+        }
+        actionIdx = others[Math.floor(Math.random() * others.length)];
+      } else {
+        actionIdx = 0;
+      }
+    }
+
+    const prevNode = agent;
+    const nextNode = adj[agent][actionIdx];
+    const reward = (nextNode === goalNode) ? GOAL_REWARD : STEP_REWARD;
+
+    prevAgent = prevNode;
+    agent = nextNode;
+    lastReward = reward;
+    totalReward += reward;
+    discountedReturn += discount * reward;
+    discount *= GAMMA;
+    stepCount++;
+
+    // Fade trail
+    for (let i = trail.length - 1; i >= 0; i--) {
+      trail[i][1] *= 0.88;
+      if (trail[i][1] < 0.02) trail.splice(i, 1);
+    }
+
+    updateStats();
+    draw();
+
+    return agent === goalNode;
+  }
+
+  // ─── Drawing ─────────────────────────────────────────
+  function draw() {
+    ctx.fillStyle = COL.bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Find max value for colour scaling
+    let maxV = 0;
+    if (values) {
+      for (let i = 0; i < values.length; i++) {
+        if (values[i] > maxV) maxV = values[i];
+      }
+    }
+
+    // Draw edges
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#3a5a6a';
+    for (const [i, j] of edges) {
+      ctx.beginPath();
+      ctx.moveTo(nodes[i].x, nodes[i].y);
+      ctx.lineTo(nodes[j].x, nodes[j].y);
+      ctx.stroke();
+    }
+
+    // Draw trail
+    for (const [nodeIdx, opacity] of trail) {
+      const n = nodes[nodeIdx];
+      ctx.fillStyle = `rgba(192, 160, 64, ${opacity * 0.15})`;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, NODE_RADIUS + 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Draw nodes
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+
+      if (i === goalNode) {
+        // Goal node
+        ctx.fillStyle = COL.goalGlow;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, NODE_RADIUS + 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = COL.goal;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, NODE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        // V inside the goal node
+        ctx.fillStyle = '#0a0e14';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText((values ? values[i].toFixed(2) : '0.00'), n.x, n.y);
+        // R below the goal node
+        ctx.fillStyle = '#c07050';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText('R=' + GOAL_REWARD.toFixed(1), n.x, n.y + NODE_RADIUS + 3);
+      } else {
+        // Node fill: green if just updated, value-coloured if has value, blue default
+        ctx.fillStyle = (!running && updatedNodes.has(i)) ? '#2a6a3a' : ((values && values[i] > 0) ? COL.valueBg(values[i], maxV) : COL.node);
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, NODE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        // V inside the node
+        const vt = (viIterations > 0 && maxV > 0) ? Math.max(0, values[i] / maxV) : 0;
+        ctx.fillStyle = vt > 0.5 ? '#000000' : '#d0d0d0';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText((values ? values[i].toFixed(2) : '0.00'), n.x, n.y);
+        // R below the node
+        ctx.fillStyle = '#c07050';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText('R=' + STEP_REWARD.toFixed(1), n.x, n.y + NODE_RADIUS + 3);
+      }
+
+      // Node border
+      ctx.strokeStyle = (i === startNode) ? COL.start : '#3a5a6a';
+      ctx.lineWidth = (i === startNode) ? 2.5 : 1.5;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, NODE_RADIUS, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Start label
+      if (i === startNode) {
+        ctx.fillStyle = COL.start;
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('S', n.x, n.y);
+      }
+    }
+
+    // Draw agent
+    const an = nodes[agent];
+    const onGoal = agent === goalNode;
+    const agentRadius = onGoal ? NODE_RADIUS + 4 : NODE_RADIUS - 2;
+
+    const glow = ctx.createRadialGradient(an.x, an.y, 0, an.x, an.y, NODE_RADIUS + 14);
+    glow.addColorStop(0, onGoal ? 'rgba(255, 200, 64, 0.5)' : COL.agentGlow);
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(an.x, an.y, NODE_RADIUS + 14, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = onGoal ? '#ffc840' : COL.agent;
+    ctx.beginPath();
+    ctx.arc(an.x, an.y, agentRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ─── Stats ───────────────────────────────────────────
+  function updateStats() {
+    document.getElementById('mode-display').textContent = mode || '—';
+    document.getElementById('step-count').textContent = stepCount;
+    document.getElementById('last-reward').textContent = lastReward === null ? '—' : lastReward.toFixed(3);
+    document.getElementById('total-reward').textContent = totalReward.toFixed(3);
+    document.getElementById('discounted-return').textContent = discountedReturn.toFixed(4);
+    document.getElementById('node-count').textContent = nodes.length;
+    document.getElementById('edge-count').textContent = edges.length;
+    document.getElementById('gamma-display').textContent = GAMMA;
+    document.getElementById('gamma-power').textContent = discount.toFixed(4);
+    document.getElementById('goal-reward-display').textContent = GOAL_REWARD.toFixed(2);
+    document.getElementById('vi-iterations').textContent = viIterations || '—';
+    document.getElementById('vi-delta').textContent = viDelta ? viDelta.toExponential(2) : '—';
+    document.getElementById('vi-vstart').textContent = values ? values[startNode].toFixed(4) : '—';
+  }
+
+  function resetAgent() {
+    agent = startNode; prevAgent = -1;
+    stepCount = 0;
+    totalReward = 0;
+    discountedReturn = 0;
+    discount = 1.0;
+    trail = [];
+    lastReward = null;
+    updateStats();
+    draw();
+  }
+
+  // ─── Controls ────────────────────────────────────────
+  const btnNew = document.getElementById('btn-new');
+  const btnStart = document.getElementById('btn-start');
+  const btnSolve = document.getElementById('btn-solve');
+  const btnReset = document.getElementById('btn-reset');
+  const speedSlider = document.getElementById('speed');
+
+  btnNew.addEventListener('click', () => {
+    running = false;
+    solving = false;
+    generateGraph();
+    converged = false;
+    mode = null;
+    agent = startNode; prevAgent = -1;
+    trail = [];
+    lastReward = null;
+    stepCount = 0;
+    totalReward = 0;
+    discountedReturn = 0;
+    discount = 1.0;
+    btnStart.textContent = 'Random';
+    btnSolve.textContent = 'Solve';
+    updateStats();
+    draw();
+  });
+
+  btnStart.addEventListener('click', () => {
+    if (running) {
+      running = false;
+      solving = false;
+      btnStart.textContent = 'Random';
+    } else {
+      // Run random walk on current graph
+      initValues();
+      converged = false;
+      resetAgent();
+      mode = 'random';
+      running = true;
+      btnStart.textContent = 'Pause';
+      btnSolve.textContent = 'Solve';
+      updateStats();
+      runLoop();
+    }
+  });
+
+  btnSolve.addEventListener('click', () => {
+    if (solving) {
+      solving = false;
+      running = false;
+      btnSolve.textContent = 'Solve';
+      return;
+    }
+
+    if (!values) initValues();
+    mode = 'solving';
+    solving = true;
+    running = false;
+    btnSolve.textContent = 'Pause';
+    // Start the run-then-sweep cycle
+    doRunThenSweep();
+  });
+
+  function doRunThenSweep() {
+    if (!solving) return;
+
+    // Reset agent and run an episode with current policy
+    resetAgent();
+
+    setTimeout(() => {
+      if (!solving) return;
+      running = true;
+      runEpisodeThenNextSweep();
+    }, 500);
+  }
+
+  function sweepThenNextEpisode() {
+    if (!solving) return;
+
+    // Do one Bellman sweep and show updated values
+    viSweep();
+    updateStats();
+    draw();
+
+    if (converged) {
+      // Run one final episode with the optimal policy
+      setTimeout(() => {
+        if (!solving) return;
+        resetAgent();
+        setTimeout(() => {
+          if (!solving) return;
+          running = true;
+          runFinalEpisode();
+        }, 500);
+      }, 1000);
+      return;
+    }
+
+    // Pause to show updated values, then start next episode
+    setTimeout(() => doRunThenSweep(), 1000);
+  }
+
+  function runFinalEpisode() {
+    if (!solving || !running) return;
+    const done = step();
+    if (done) {
+      running = false;
+      solving = false;
+      btnSolve.textContent = 'Solved!';
+      return;
+    }
+    const delay = Math.max(20, 2000 / speedSlider.value);
+    setTimeout(runFinalEpisode, delay);
+  }
+
+  function runEpisodeThenNextSweep() {
+    if (!solving || !running) return;
+
+    const done = step();
+    if (done) {
+      running = false;
+      // Episode finished — now do a Bellman sweep
+      setTimeout(() => sweepThenNextEpisode(), 800);
+      return;
+    }
+
+    if (stepCount > 500) {
+      running = false;
+      draw();
+      setTimeout(() => sweepThenNextEpisode(), 800);
+      return;
+    }
+
+    // Fast on low-value nodes (aimless), slow on high-value nodes (purposeful)
+    const maxV = values ? Math.max(...values) : 1;
+    const cellV = values ? (values[agent] || 0) : 0;
+    const t = maxV > 0 ? Math.max(0, cellV / maxV) : 0;
+    const fast = 60;
+    const slow = Math.max(60, 2000 / speedSlider.value);
+    const delay = fast + t * (slow - fast);
+    setTimeout(runEpisodeThenNextSweep, delay);
+  }
+
+  function runLoop() {
+    if (!running) return;
+    const done = step();
+    if (done) {
+      running = false;
+      btnStart.textContent = 'Random';
+      return;
+    }
+    const delay = Math.max(20, 2000 / speedSlider.value);
+    setTimeout(runLoop, delay);
+  }
+
+  btnReset.addEventListener('click', () => {
+    running = false;
+    solving = false;
+    converged = false;
+    initValues();
+    viIterations = 0;
+    viDelta = 0;
+    mode = null;
+    btnStart.textContent = 'Random';
+    btnSolve.textContent = 'Solve';
+    resetAgent();
+  });
+
+  // ─── Init ────────────────────────────────────────────
+  generateGraph();
+  agent = startNode;
+  draw();
+  updateStats();
+})();
+</script>
+</body>
+</html>
