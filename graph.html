@@ -172,7 +172,6 @@
   let edges = [];       // [[i, j], ...]
   let adj = [];         // adj[i] = [j, k, ...] neighbour indices
   let edgeCosts = {};   // "i,j" -> negative cost
-  let nodeWeights = []; // weight per node (reward = -weight)
   let startNode = 0;
   let goalNode = 0;
 
@@ -343,11 +342,6 @@
     adj = buildAdjacency(nodes.length, edges);
     edgeCosts = computeEdgeCosts(nodes, edges);
     [startNode, goalNode] = pickStartGoal(nodes);
-    // Assign random weights to nodes (goal gets 0)
-    const WEIGHT_OPTIONS = [1, 2, 5];
-    nodeWeights = nodes.map((_, i) =>
-      i === goalNode ? 0 : WEIGHT_OPTIONS[Math.floor(Math.random() * WEIGHT_OPTIONS.length)]
-    );
     // Initialize values immediately so they're visible from the start
     initValues();
   }
@@ -392,7 +386,7 @@
         for (let b = 0; b < nAdj; b++) {
           const j = adj[i][b];
           const prob = (b === a) ? (1 - slipProb + slipProb / nAdj) : (slipProb / nAdj);
-          v += prob * (-nodeWeights[j] + GAMMA * oldValues[j]);
+          v += prob * (STEP_REWARD + GAMMA * oldValues[j]);
         }
         if (v > bestV + 1e-10) {
           bestV = v;
@@ -455,7 +449,7 @@
 
     const prevNode = agent;
     const nextNode = adj[agent][actionIdx];
-    const reward = (nextNode === goalNode) ? GOAL_REWARD : -nodeWeights[nextNode];
+    const reward = (nextNode === goalNode) ? GOAL_REWARD : STEP_REWARD;
 
     prevAgent = prevNode;
     agent = nextNode;
@@ -548,12 +542,12 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText((values ? values[i].toFixed(2) : '0.00'), n.x, n.y);
-        // Weight below the node
+        // R below the node
         ctx.fillStyle = '#c07050';
         ctx.font = '10px monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText('w=' + nodeWeights[i], n.x, n.y + NODE_RADIUS + 3);
+        ctx.fillText('R=' + STEP_REWARD.toFixed(1), n.x, n.y + NODE_RADIUS + 3);
       }
 
       // Node border
