@@ -102,6 +102,10 @@
         Speed
         <input type="range" id="speed" min="1" max="50" value="3">
       </label>
+      <label>
+        Slip <span id="slip-display">0%</span>
+        <input type="range" id="slip" min="0" max="50" value="0">
+      </label>
     </div>
     <canvas id="grid"></canvas>
   </div>
@@ -118,6 +122,7 @@
     <div><span class="label">γ</span> <span id="gamma-display">0.9</span></div>
     <div><span class="label">γ<sup>t</sup></span> <span id="gamma-power">1.00</span></div>
     <div><span class="label">Goal reward</span> <span id="goal-reward-display">1.00</span></div>
+    <div><span class="label">Slip probability</span> <span id="slip-prob-display">0%</span></div>
     <h2>Value Iteration</h2>
     <div><span class="label">Iterations</span> <span id="vi-iterations">—</span></div>
     <div><span class="label">Converged (δ)</span> <span id="vi-delta">—</span></div>
@@ -131,6 +136,7 @@
   const STEP_REWARD = -0.10;
   const GOAL_REWARD = 1.0;
   const GAMMA = 0.9;
+  let slipProb = 0;
   const NODE_RADIUS = 18;
   const W = 560, H = 560;
   const PAD = 50;
@@ -375,10 +381,16 @@
 
       let bestV = -Infinity;
       let bestActions = [];
+      const nAdj = adj[i].length;
 
-      for (let a = 0; a < adj[i].length; a++) {
-        const j = adj[i][a];
-        const v = STEP_REWARD + GAMMA * oldValues[j];
+      for (let a = 0; a < nAdj; a++) {
+        // Expected value: (1-slip)*intended + slip*uniform over all neighbors
+        let v = 0;
+        for (let b = 0; b < nAdj; b++) {
+          const j = adj[i][b];
+          const prob = (b === a) ? (1 - slipProb + slipProb / nAdj) : (slipProb / nAdj);
+          v += prob * (STEP_REWARD + GAMMA * oldValues[j]);
+        }
         if (v > bestV + 1e-10) {
           bestV = v;
           bestActions = [a];
@@ -431,6 +443,11 @@
       } else {
         actionIdx = 0;
       }
+    }
+
+    // Apply slippage: with probability slipProb, pick a random neighbor instead
+    if (slipProb > 0 && Math.random() < slipProb) {
+      actionIdx = Math.floor(Math.random() * adj[agent].length);
     }
 
     const prevNode = agent;
@@ -607,6 +624,13 @@
   const btnSolve = document.getElementById('btn-solve');
   const btnReset = document.getElementById('btn-reset');
   const speedSlider = document.getElementById('speed');
+  const slipSlider = document.getElementById('slip');
+
+  slipSlider.addEventListener('input', () => {
+    slipProb = slipSlider.value / 100;
+    document.getElementById('slip-display').textContent = slipSlider.value + '%';
+    document.getElementById('slip-prob-display').textContent = slipSlider.value + '%';
+  });
 
   btnNew.addEventListener('click', () => {
     running = false;
