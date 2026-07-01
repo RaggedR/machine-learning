@@ -211,7 +211,7 @@
       nr = r; nc = c;
     }
     const done = isGoal(nr, nc);
-    const reward = done ? GOAL_REWARD : STEP_REWARD;
+    const reward = STEP_REWARD;
     return { nr, nc, reward, done };
   }
 
@@ -221,12 +221,11 @@
 
   function initValues() {
     values = {};
-    policy = {};
+    policy = null;  // No policy until first sweep
     for (let r = 0; r < ROWS; r++)
       for (let c = 0; c < COLS; c++)
         if (!isWall(r, c)) {
-          values[`${r},${c}`] = 0;
-          if (!isGoal(r, c)) policy[`${r},${c}`] = 0;
+          values[`${r},${c}`] = isGoal(r, c) ? GOAL_REWARD : 0;
         }
     viIterations = 0;
     viDelta = Infinity;
@@ -235,6 +234,7 @@
 
   function viSweep() {
     // One full sweep of the Bellman update
+    if (!policy) policy = {};
     let delta = 0;
 
     for (let r = 0; r < ROWS; r++) {
@@ -246,8 +246,11 @@
         let bestV = -Infinity;
         let bestActions = [];
 
+        // Only update if at least one neighbor has positive value
+        let hasReachableValue = false;
         for (let a = 0; a < 4; a++) {
           const { nr, nc, reward } = getTransition(r, c, a);
+          if (values[`${nr},${nc}`] > 0) hasReachableValue = true;
           const v = reward + GAMMA * values[`${nr},${nc}`];
           if (v > bestV + 1e-10) {
             bestV = v;
@@ -257,16 +260,24 @@
           }
         }
 
+        if (!hasReachableValue) continue;
+
         values[key] = bestV;
-        // Break ties randomly so the policy isn't always "up"
-        policy[key] = bestActions[Math.floor(Math.random() * bestActions.length)];
+        // Store all tied actions — agent samples uniformly at runtime
+        policy[key] = bestActions;
         delta = Math.max(delta, Math.abs(bestV - oldV));
       }
     }
 
     viIterations++;
     viDelta = delta;
-    converged = delta < 1e-8;
+    // Not converged until all reachable cells have been updated AND delta is small
+    let allReached = true;
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++)
+        if (!isWall(r, c) && !isGoal(r, c) && values[`${r},${c}`] === 0)
+          allReached = false;
+    converged = allReached && delta < 1e-8;
     return converged;
   }
 
@@ -277,13 +288,10 @@
     let action;
     if (policy && mode !== 'random') {
       const key = `${agent[0]},${agent[1]}`;
-      action = policy[key];
-      if (action === undefined) action = Math.floor(Math.random() * 4);
-      // If this action would hit a wall or boundary, pick randomly instead
-      const [tr, tc] = ACTIONS[action];
-      const testR = agent[0] + tr;
-      const testC = agent[1] + tc;
-      if (testR < 0 || testR >= ROWS || testC < 0 || testC >= COLS || isWall(testR, testC)) {
+      const actions = policy[key];
+      if (actions) {
+        action = actions[Math.floor(Math.random() * actions.length)];
+      } else {
         action = Math.floor(Math.random() * 4);
       }
     } else {
@@ -359,26 +367,42 @@
           ctx.fillRect(x, y, CELL, CELL);
           ctx.fillStyle = COL.cell;
           ctx.fillRect(x + 2, y + 2, CELL - 4, CELL - 4);
+          // Value (top half)
+          const gv = values ? (values[key] || 0) : 0;
           ctx.fillStyle = COL.goal;
-          ctx.font = '28px serif';
+          ctx.font = 'bold 13px monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText('G', x + CELL / 2, y + CELL / 2);
-        } else if (values) {
-          // Colour cell by value
-          ctx.fillStyle = COL.valueBg(values[key] || 0, maxV);
+          ctx.fillText(gv.toFixed(3), x + CELL / 2, y + CELL / 2 - 10);
+          // Reward (bottom)
+          ctx.fillStyle = '#c07050';
+          ctx.font = '11px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText('R=' + GOAL_REWARD.toFixed(2), x + CELL / 2, y + CELL - 6);
+        } else {
+          // Colour cell by value if solving, otherwise default
+          if (values) {
+            ctx.fillStyle = COL.valueBg(values[key] || 0, maxV);
+          } else {
+            ctx.fillStyle = COL.cell;
+          }
           ctx.fillRect(x, y, CELL, CELL);
 
-          // Show value number
+          // Show value (top half)
+          const v = values ? (values[key] || 0) : 0;
           ctx.fillStyle = '#a8bcc8';
           ctx.font = '13px monospace';
           ctx.textAlign = 'center';
-          ctx.textBaseline = 'bottom';
-          ctx.fillText((values[key] || 0).toFixed(3), x + CELL / 2, y + CELL - 8);
+          ctx.textBaseline = 'middle';
+          ctx.fillText(v.toFixed(3), x + CELL / 2, y + CELL / 2 - 10);
 
-        } else {
-          ctx.fillStyle = COL.cell;
-          ctx.fillRect(x, y, CELL, CELL);
+          // Show reward (bottom)
+          ctx.fillStyle = '#c07050';
+          ctx.font = '11px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText('R=' + STEP_REWARD.toFixed(2), x + CELL / 2, y + CELL - 6);
         }
 
         // Grid lines
@@ -494,39 +518,73 @@
     solving = true;
     running = false;
     btnSolve.textContent = 'Pause';
-    // Start the solve-then-run cycle
-    doSweepThenRun();
+    // Start the run-then-sweep cycle
+    doRunThenSweep();
   });
 
-  function doSweepThenRun() {
+  function resetAgent() {
+    agent = [...START];
+    stepCount = 0;
+    totalReward = 0;
+    discountedReturn = 0;
+    discount = 1.0;
+    trail = [];
+    lastAction = null;
+    lastReward = null;
+    updateStats();
+    draw();
+  }
+
+  function doRunThenSweep() {
     if (!solving) return;
 
-    // 1. Do one Bellman sweep
+    // 1. Reset agent and run an episode with current policy
+    resetAgent();
+
+    setTimeout(() => {
+      if (!solving) return;
+      running = true;
+      runEpisodeThenNextSweep();
+    }, 500);
+  }
+
+  function sweepThenNextEpisode() {
+    if (!solving) return;
+
+    // Do one Bellman sweep and show updated values
     viSweep();
     updateStats();
     draw();
 
-    // 2. Pause to show updated values, then reset agent and run
-    setTimeout(() => {
-      if (!solving) return;
-      agent = [...START];
-      stepCount = 0;
-      totalReward = 0;
-      discountedReturn = 0;
-      discount = 1.0;
-      trail = [];
-      lastAction = null;
-      lastReward = null;
-      updateStats();
-      draw();
-
-      // 3. Another pause so you see the agent at start, then go
+    if (converged) {
+      // Run one final episode with the optimal policy
       setTimeout(() => {
         if (!solving) return;
-        running = true;
-        runEpisodeThenNextSweep();
-      }, 500);
-    }, 1000);
+        resetAgent();
+        setTimeout(() => {
+          if (!solving) return;
+          running = true;
+          runFinalEpisode();
+        }, 500);
+      }, 1000);
+      return;
+    }
+
+    // Pause to show updated values, then start next episode
+    setTimeout(() => doRunThenSweep(), 1000);
+  }
+
+  function runFinalEpisode() {
+    if (!solving || !running) return;
+    const done = step();
+    if (done) {
+      running = false;
+      solving = false;
+      btnSolve.textContent = 'Solved!';
+      return;
+    }
+    const delay = Math.max(20, 2000 / speedSlider.value);
+    setTimeout(runFinalEpisode, delay);
   }
 
   function runEpisodeThenNextSweep() {
@@ -535,14 +593,8 @@
     const done = step();
     if (done) {
       running = false;
-      if (converged) {
-        // We're done — final policy is optimal
-        solving = false;
-        btnSolve.textContent = 'Solved!';
-        return;
-      }
-      // Pause briefly at the goal, then do next sweep
-      setTimeout(() => doSweepThenRun(), 800);
+      // Episode finished — now do a Bellman sweep
+      setTimeout(() => sweepThenNextEpisode(), 800);
       return;
     }
 
@@ -550,11 +602,17 @@
     if (stepCount > 200) {
       running = false;
       draw();
-      setTimeout(() => doSweepThenRun(), 800);
+      setTimeout(() => sweepThenNextEpisode(), 800);
       return;
     }
 
-    const delay = Math.max(20, 2000 / speedSlider.value);
+    // Fast on low-value cells (aimless), slow on high-value cells (purposeful)
+    const maxV = values ? Math.max(...Object.values(values)) : 1;
+    const cellV = values ? (values[`${agent[0]},${agent[1]}`] || 0) : 0;
+    const t = maxV > 0 ? Math.max(0, cellV / maxV) : 0;
+    const fast = 60;
+    const slow = Math.max(60, 2000 / speedSlider.value);
+    const delay = fast + t * (slow - fast);
     setTimeout(runEpisodeThenNextSweep, delay);
   }
 
