@@ -52,8 +52,6 @@
       transition: background 0.2s;
     }
     button:hover { background: #d8b848; }
-    #btn-new { background: #5a6878; color: #0a0e14; }
-    #btn-new:hover { background: #7a8fa0; }
     #btn-solve { background: #4a8a60; color: #0a0e14; }
     #btn-solve:hover { background: #5aaa70; }
     #btn-solve:disabled { opacity: 0.4; cursor: default; }
@@ -94,7 +92,6 @@
   <div id="left">
     <h1>Graph Markov Decision Process</h1>
     <div id="controls">
-      <button id="btn-new">New Graph</button>
       <button id="btn-start">Random</button>
       <button id="btn-solve">Solve</button>
       <button id="btn-reset">Reset</button>
@@ -175,6 +172,7 @@
   let edges = [];       // [[i, j], ...]
   let adj = [];         // adj[i] = [j, k, ...] neighbour indices
   let edgeCosts = {};   // "i,j" -> negative cost
+  let nodeWeights = []; // weight per node (reward = -weight)
   let startNode = 0;
   let goalNode = 0;
 
@@ -345,6 +343,11 @@
     adj = buildAdjacency(nodes.length, edges);
     edgeCosts = computeEdgeCosts(nodes, edges);
     [startNode, goalNode] = pickStartGoal(nodes);
+    // Assign random weights to nodes (goal gets 0)
+    const WEIGHT_OPTIONS = [1, 2, 5];
+    nodeWeights = nodes.map((_, i) =>
+      i === goalNode ? 0 : WEIGHT_OPTIONS[Math.floor(Math.random() * WEIGHT_OPTIONS.length)]
+    );
     // Initialize values immediately so they're visible from the start
     initValues();
   }
@@ -389,7 +392,7 @@
         for (let b = 0; b < nAdj; b++) {
           const j = adj[i][b];
           const prob = (b === a) ? (1 - slipProb + slipProb / nAdj) : (slipProb / nAdj);
-          v += prob * (STEP_REWARD + GAMMA * oldValues[j]);
+          v += prob * (-nodeWeights[j] + GAMMA * oldValues[j]);
         }
         if (v > bestV + 1e-10) {
           bestV = v;
@@ -452,7 +455,7 @@
 
     const prevNode = agent;
     const nextNode = adj[agent][actionIdx];
-    const reward = (nextNode === goalNode) ? GOAL_REWARD : STEP_REWARD;
+    const reward = (nextNode === goalNode) ? GOAL_REWARD : -nodeWeights[nextNode];
 
     prevAgent = prevNode;
     agent = nextNode;
@@ -545,12 +548,12 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText((values ? values[i].toFixed(2) : '0.00'), n.x, n.y);
-        // R below the node
+        // Weight below the node
         ctx.fillStyle = '#c07050';
         ctx.font = '10px monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText('R=' + STEP_REWARD.toFixed(1), n.x, n.y + NODE_RADIUS + 3);
+        ctx.fillText('w=' + nodeWeights[i], n.x, n.y + NODE_RADIUS + 3);
       }
 
       // Node border
@@ -619,7 +622,6 @@
   }
 
   // ─── Controls ────────────────────────────────────────
-  const btnNew = document.getElementById('btn-new');
   const btnStart = document.getElementById('btn-start');
   const btnSolve = document.getElementById('btn-solve');
   const btnReset = document.getElementById('btn-reset');
@@ -630,25 +632,6 @@
     slipProb = slipSlider.value / 100;
     document.getElementById('slip-display').textContent = slipSlider.value + '%';
     document.getElementById('slip-prob-display').textContent = slipSlider.value + '%';
-  });
-
-  btnNew.addEventListener('click', () => {
-    running = false;
-    solving = false;
-    generateGraph();
-    converged = false;
-    mode = null;
-    agent = startNode; prevAgent = -1;
-    trail = [];
-    lastReward = null;
-    stepCount = 0;
-    totalReward = 0;
-    discountedReturn = 0;
-    discount = 1.0;
-    btnStart.textContent = 'Random';
-    btnSolve.textContent = 'Solve';
-    updateStats();
-    draw();
   });
 
   btnStart.addEventListener('click', () => {
