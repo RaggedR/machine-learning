@@ -507,46 +507,41 @@
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i];
 
+      const hasValue = viIterations > 0 && values && values[i] > 0;
+
+      if (hasValue) {
+        // Node has been reached by value iteration — show green
+        if (i === goalNode) {
+          ctx.fillStyle = COL.goalGlow;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, NODE_RADIUS + 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = (!running && updatedNodes.has(i)) ? '#2a6a3a' : COL.valueBg(values[i], maxV);
+      } else {
+        // Not yet reached — blue
+        ctx.fillStyle = COL.node;
+      }
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, NODE_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+
+      // V inside the node
+      const vt = hasValue ? Math.max(0, values[i] / maxV) : 0;
+      ctx.fillStyle = vt > 0.5 ? '#000000' : '#d0d0d0';
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText((hasValue ? values[i].toFixed(2) : '0.00'), n.x, n.y);
+
+      // Label below the node
+      ctx.fillStyle = '#c07050';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
       if (i === goalNode) {
-        // Goal node
-        ctx.fillStyle = COL.goalGlow;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, NODE_RADIUS + 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = COL.goal;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, NODE_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        // V inside the goal node
-        ctx.fillStyle = '#0a0e14';
-        ctx.font = 'bold 11px monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText((values ? values[i].toFixed(2) : '0.00'), n.x, n.y);
-        // R below the goal node
-        ctx.fillStyle = '#c07050';
-        ctx.font = '10px monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
         ctx.fillText('R=' + GOAL_REWARD.toFixed(1), n.x, n.y + NODE_RADIUS + 3);
       } else {
-        // Node fill: green if just updated, value-coloured if has value, blue default
-        ctx.fillStyle = (!running && updatedNodes.has(i)) ? '#2a6a3a' : ((values && values[i] > 0) ? COL.valueBg(values[i], maxV) : COL.node);
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, NODE_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        // V inside the node
-        const vt = (viIterations > 0 && maxV > 0) ? Math.max(0, values[i] / maxV) : 0;
-        ctx.fillStyle = vt > 0.5 ? '#000000' : '#d0d0d0';
-        ctx.font = 'bold 11px monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText((values ? values[i].toFixed(2) : '0.00'), n.x, n.y);
-        // R below the node
-        ctx.fillStyle = '#c07050';
-        ctx.font = '10px monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
         ctx.fillText('R=' + STEP_REWARD.toFixed(1), n.x, n.y + NODE_RADIUS + 3);
       }
 
